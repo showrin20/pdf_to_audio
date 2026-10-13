@@ -1,0 +1,14 @@
+{
+  "name": "pdf-to-audio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome extension: PDF to audiobook (local extraction, Gemini cleanup, Edge-TTS narration).",
+  "scripts": {
+    "vendor:pdfjs": "cp node_modules/pdfjs-dist/build/pdf.min.mjs node_modules/pdfjs-dist/build/pdf.worker.min.mjs src/vendor/pdfjs/",
+    "sync-env": "node scripts/sync-env.mjs"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "pdfjs-dist": "^6.4.299"
+  }
+}

@@ -1,0 +1,125 @@
+.mascot {
+  display: block;
+  overflow: visible;
+}
+
+.mascot .tail {
+  transform-origin: 62px 78px;
+  animation: tail-sway 2.6s ease-in-out infinite;
+}
+
+.mascot .head-group {
+  transform-origin: 50px 56px;
+  animation: idle-bob 2.8s ease-in-out infinite;
+}
+
+.mascot .ear-left {
+  transform-origin: 28px 26px;
+  animation: ear-twitch 4.5s ease-in-out infinite;
+}
+
+.mascot .ear-right {
+  transform-origin: 72px 26px;
+  animation: ear-twitch 4.5s ease-in-out infinite 0.8s;
+}
+
+.mascot .eq-bar {
+  transform-origin: bottom;
+  opacity: 0;
+}
+
+.mascot .cup-glow {
+  opacity: 0;
+}
+
+/* Active = pipeline working or audio playing: cat grooves to the "music". */
+.mascot.active .head-group {
+  animation-name: active-bob;
+  animation-duration: 0.7s;
+}
+
+.mascot.active .tail {
+  animation-duration: 0.9s;
+}
+
+.mascot.active .eq-bar {
+  opacity: 1;
+  animation: eq-bounce 0.8s ease-in-out infinite;
+}
+.mascot.active .eq-bar:nth-child(2) {
+  animation-delay: 0.12s;
+}
+.mascot.active .eq-bar:nth-child(3) {
+  animation-delay: 0.24s;
+}
+
+.mascot.active .cup-glow {
+  opacity: 1;
+  animation: cup-pulse 1s ease-in-out infinite;
+}
+
+@keyframes idle-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-2px) rotate(-1.5deg);
+  }
+}
+
+@keyframes active-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-3deg);
+  }
+  50% {
+    transform: translateY(-4px) rotate(3deg);
+  }
+}
+
+@keyframes tail-sway {
+  0%,
+  100% {
+    transform: rotate(-6deg);
+  }
+  50% {
+    transform: rotate(8deg);
+  }
+}
+
+@keyframes ear-twitch {
+  0%,
+  85%,
+  100% {
+    transform: rotate(0deg);
+  }
+  90% {
+    transform: rotate(-12deg);
+  }
+  95% {
+    transform: rotate(6deg);
+  }
+}
+
+@keyframes eq-bounce {
+  0%,
+  100% {
+    transform: scaleY(0.4);
+  }
+  50% {
+    transform: scaleY(1.2);
+  }
+}
+
+@keyframes cup-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    r: 7px;
+  }
+  50% {
+    opacity: 0.6;
+    r: 9px;
+  }
+}

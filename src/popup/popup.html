@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="popup.css" />
+    <link rel="stylesheet" href="../lib/mascot.css" />
+  </head>
+  <body>
+    <main>
+      <header class="app-header">
+        <h1>PDF to Audiobook</h1>
+        <div id="mascotSlot" class="mascot-slot"></div>
+      </header>
+
+      <details id="settings">
+        <summary>⚙ Settings</summary>
+        <div class="settings-body">
+          <label for="apiKey">Gemini API key</label>
+          <input id="apiKey" type="password" placeholder="Leave blank to use .env" autocomplete="off" />
+          <p class="hint">Defaults to the key in <code>.env</code> if left blank.</p>
+
+          <label for="voice">Narration voice</label>
+          <select id="voice">
+            <option value="en-GB-SoniaNeural">Sonia (British, female)</option>
+            <option value="en-GB-RyanNeural">Ryan (British, male)</option>
+          </select>
+        </div>
+      </details>
+
+      <section id="upload">
+        <label class="file-drop" id="fileDrop">
+          <input id="fileInput" type="file" accept="application/pdf" hidden />
+          <span id="fileLabel">Choose a PDF…</span>
+        </label>
+      </section>
+
+      <section id="progress" hidden>
+        <div class="flow">
+          <svg class="flow-icon doc" viewBox="0 0 48 48" aria-hidden="true">
+            <rect x="10" y="4" width="28" height="40" rx="4" fill="#1e293b" stroke="#475569" stroke-width="2" />
+            <path d="M28 4v9a3 3 0 0 0 3 3h7" fill="none" stroke="#475569" stroke-width="2" />
+            <rect x="15" y="22" width="18" height="2.5" rx="1.25" fill="#3b82f6" />
+            <rect x="15" y="28" width="18" height="2.5" rx="1.25" fill="#3b82f6" opacity="0.7" />
+            <rect x="15" y="34" width="12" height="2.5" rx="1.25" fill="#3b82f6" opacity="0.5" />
+          </svg>
+          <div class="flow-track">
+            <span class="chip"></span>
+            <span class="chip"></span>
+            <span class="chip"></span>
+          </div>
+          <svg class="flow-icon audio" viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M8 26v-4a16 16 0 0 1 32 0v4" fill="none" stroke="#475569" stroke-width="3" stroke-linecap="round" />
+            <rect x="5" y="24" width="8" height="14" rx="4" fill="#3b82f6" />
+            <rect x="35" y="24" width="8" height="14" rx="4" fill="#3b82f6" />
+            <g class="eq-bars">
+              <rect x="20" y="30" width="3" height="6" fill="#93c5fd" />
+              <rect x="25" y="26" width="3" height="10" fill="#93c5fd" />
+              <rect x="30" y="29" width="3" height="7" fill="#93c5fd" />
+            </g>
+          </svg>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <p id="progressText"></p>
+      </section>
+
+      <section id="done" hidden>
+        <button id="openPlayer">Open Player</button>
+        <button id="downloadBtn">Download Audiobook</button>
+        <button id="startOver" class="secondary">Start Over</button>
+      </section>
+
+      <section id="errorBox" hidden>
+        <p id="errorText"></p>
+        <button id="dismissError" class="secondary">Start Over</button>
+      </section>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

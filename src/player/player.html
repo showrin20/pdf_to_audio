@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Audiobook Player</title>
+    <link rel="stylesheet" href="player.css" />
+    <link rel="stylesheet" href="../lib/mascot.css" />
+  </head>
+  <body>
+    <header>
+      <div class="title-group">
+        <div id="mascotSlot" class="mascot-slot"></div>
+        <h1 id="title">Audiobook</h1>
+      </div>
+      <div class="actions">
+        <button id="downloadBtn">Download</button>
+      </div>
+    </header>
+
+    <audio id="audio" controls></audio>
+
+    <main id="transcript"></main>
+
+    <p id="emptyState" hidden>
+      No audiobook is ready yet. Generate one from the extension popup first.
+    </p>
+
+    <script type="module" src="player.js"></script>
+  </body>
+</html>

@@ -1,0 +1,93 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  background: #0f172aee;
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid #1e293b;
+  z-index: 10;
+}
+
+h1 {
+  font-size: 16px;
+  margin: 0;
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mascot-slot {
+  flex-shrink: 0;
+}
+
+button {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: none;
+  background: #3b82f6;
+  color: white;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #2563eb;
+}
+
+audio {
+  display: block;
+  width: calc(100% - 48px);
+  margin: 16px 24px;
+}
+
+main#transcript {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 8px 24px 80px;
+  font-size: 17px;
+  line-height: 1.8;
+}
+
+main#transcript p {
+  margin: 0 0 18px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #cbd5e1;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+main#transcript p:hover {
+  background: #1e293b;
+}
+
+main#transcript p.active {
+  background: #1e3a5f;
+  color: #f8fafc;
+}
+
+#emptyState {
+  text-align: center;
+  color: #94a3b8;
+  margin-top: 60px;
+}
