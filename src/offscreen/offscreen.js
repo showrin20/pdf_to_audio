@@ -1,7 +1,15 @@
-import { MSG, STAGE, OPFS_PATHS, WORDS_PER_AUDIO_PART } from "../lib/constants.js";
+import {
+  MSG,
+  STAGE,
+  OPFS_PATHS,
+  WORDS_PER_AUDIO_PORTION,
+  TTS_PORTION_DELAY_MS,
+  GEMINI_REQUEST_DELAY_MS,
+  WORDS_PER_CLEAN_WINDOW,
+} from "../lib/constants.js";
 import { extractPdfText } from "../lib/pdf-extract.js";
-import { TextWindower, cleanWindow } from "../lib/gemini-clean.js";
-import { synthesizeLongText } from "../lib/edge-tts.js";
+import { cleanWindow, partitionTextIntoWindows, sleep } from "../lib/gemini-clean.js";
+import { synthesizePortion } from "../lib/edge-tts.js";
 import { stitchAndPurgeParts } from "../lib/audio-stitch.js";
 import * as opfs from "../lib/opfs.js";
 
@@ -17,97 +25,196 @@ function reportComplete() {
   chrome.runtime.sendMessage({ type: MSG.PIPELINE_COMPLETE }).catch(() => {});
 }
 
-// Splits already-cleaned transcript text into ~targetWords-word parts,
-// cutting only at paragraph breaks so no sentence is split across an
-// audio file boundary.
-function partitionByWords(text, targetWords) {
-  const parts = [];
-  let start = 0;
-  while (start < text.length) {
-    const slice = text.slice(start);
-    const words = slice.split(/\s+/).filter(Boolean);
-    if (words.length <= targetWords) {
-      parts.push({ text: slice.trim(), startChar: start });
-      break;
-    }
-    let count = 0;
-    let cutLocal = -1;
-    for (const match of slice.matchAll(/\S+/g)) {
-      count++;
-      if (count >= targetWords) {
-        const breakIdx = slice.indexOf("\n\n", match.index + match[0].length);
-        cutLocal = breakIdx === -1 ? slice.length : breakIdx + 2;
-        break;
+/**
+ * Splits already-cleaned transcript text into smaller portions (~targetWords each, e.g. ~180 words),
+ * respecting paragraph breaks and sentence breaks so no sentence is split across an audio boundary.
+ * Records exact startChar in the source transcript for click-to-seek and highlighting.
+ */
+function partitionIntoPortions(text, targetWords = WORDS_PER_AUDIO_PORTION) {
+  const portions = [];
+  let cursor = 0;
+
+  function splitLongBlock(block, blockStartChar) {
+    const sentences = block.match(/[^.!?\n]+[.!?]+(?:\s+|$)|[^.!?\n]+$/g) || [block];
+    let currentText = "";
+    let currentStart = blockStartChar;
+    let currentWords = 0;
+
+    for (const sent of sentences) {
+      const words = sent.split(/\s+/).filter(Boolean).length;
+      if (currentWords + words > targetWords && currentText.trim()) {
+        portions.push({
+          text: currentText.trim(),
+          startChar: currentStart,
+        });
+        currentStart += currentText.length;
+        currentText = "";
+        currentWords = 0;
       }
+      currentText += sent;
+      currentWords += words;
     }
-    if (cutLocal === -1) cutLocal = slice.length;
-    parts.push({ text: slice.slice(0, cutLocal).trim(), startChar: start });
-    start += cutLocal;
+    if (currentText.trim()) {
+      portions.push({
+        text: currentText.trim(),
+        startChar: currentStart,
+      });
+    }
   }
-  return parts.filter((p) => p.text.length > 0);
+
+  const paragraphs = text.split(/\n{2,}/);
+  let currentPortion = "";
+  let portionStart = 0;
+  let portionWords = 0;
+
+  for (const para of paragraphs) {
+    const trimmed = para.trim();
+    if (!trimmed) continue;
+
+    const paraStart = text.indexOf(trimmed, cursor);
+    cursor = paraStart + trimmed.length;
+    const words = trimmed.split(/\s+/).filter(Boolean).length;
+
+    if (words > targetWords * 1.5) {
+      if (currentPortion.trim()) {
+        portions.push({
+          text: currentPortion.trim(),
+          startChar: portionStart,
+        });
+        currentPortion = "";
+        portionWords = 0;
+      }
+      splitLongBlock(trimmed, paraStart);
+      continue;
+    }
+
+    if (portionWords + words > targetWords && currentPortion.trim()) {
+      portions.push({
+        text: currentPortion.trim(),
+        startChar: portionStart,
+      });
+      currentPortion = "";
+      portionWords = 0;
+    }
+
+    if (!currentPortion) {
+      portionStart = paraStart;
+    } else {
+      currentPortion += "\n\n";
+    }
+    currentPortion += trimmed;
+    portionWords += words;
+  }
+
+  if (currentPortion.trim()) {
+    portions.push({
+      text: currentPortion.trim(),
+      startChar: portionStart,
+    });
+  }
+
+  return portions.filter((p) => p.text.length > 0);
 }
 
 async function runPipeline({ apiKey, model, voice }) {
+  // Wipe all existing pipeline files before starting fresh
   await opfs.remove(OPFS_PATHS.CLEANED_TRANSCRIPT);
   await opfs.remove(OPFS_PATHS.TRANSCRIPT_MAP);
   await opfs.remove(OPFS_PATHS.FINAL_AUDIO);
+  await opfs.remove(OPFS_PATHS.PARTS_DIR, { recursive: true });
 
-  // --- Stage 1 + 2: streamed extraction -> strict Gemini cleaning ---
+  // --- Stage 1: Streamed extraction from Page 1 to the end ---
   report(STAGE.EXTRACTING, { page: 0, totalPages: 0 });
   const pdfFile = await opfs.readFile(OPFS_PATHS.SOURCE_PDF);
   const arrayBuffer = await pdfFile.arrayBuffer();
 
-  const windower = new TextWindower({
-    onWindow: async (windowText) => {
-      const cleaned = await cleanWindow(apiKey, windowText, model);
-      await opfs.appendFile(OPFS_PATHS.CLEANED_TRANSCRIPT, cleaned + "\n\n");
-    },
-  });
-
+  const rawPages = [];
   await extractPdfText(arrayBuffer, async (pageNum, pageText, totalPages) => {
     report(STAGE.EXTRACTING, { page: pageNum, totalPages });
-    await windower.push(pageText);
+    rawPages.push(pageText);
   });
-  report(STAGE.CLEANING, { page: 1, totalPages: 1 });
-  await windower.flush();
 
-  // --- Stage 3: partition cleaned transcript into ~50-min parts, synthesize ---
-  const cleanedTranscript = await opfs.readText(OPFS_PATHS.CLEANED_TRANSCRIPT);
-  const parts = partitionByWords(cleanedTranscript, WORDS_PER_AUDIO_PART);
+  const fullRawText = rawPages.filter(Boolean).join("\n\n").trim();
+  if (!fullRawText) {
+    throw new Error(
+      "No readable text found in this PDF. It may be a scanned image or empty. Please use a PDF with digital text."
+    );
+  }
+
+  // --- Stage 2: Clean and organize text in windows with pacing ---
+  const windows = partitionTextIntoWindows(fullRawText, WORDS_PER_CLEAN_WINDOW);
+  const totalWindows = windows.length;
+  report(STAGE.CLEANING, { window: 1, totalWindows });
+
+  for (let w = 0; w < totalWindows; w++) {
+    report(STAGE.CLEANING, { window: w + 1, totalWindows });
+    const cleaned = await cleanWindow(apiKey, windows[w], model);
+    if (cleaned) {
+      await opfs.appendFile(OPFS_PATHS.CLEANED_TRANSCRIPT, cleaned + "\n\n");
+    }
+    if (w < totalWindows - 1) {
+      await sleep(GEMINI_REQUEST_DELAY_MS);
+    }
+  }
+
+  // --- Stage 3: Divide into smaller portions, synthesize with pacing, store parts ---
+  const cleanedTranscript = (await opfs.readText(OPFS_PATHS.CLEANED_TRANSCRIPT)).trim();
+  if (!cleanedTranscript) {
+    throw new Error("Text cleaning produced an empty transcript.");
+  }
+
+  const portions = partitionIntoPortions(cleanedTranscript, WORDS_PER_AUDIO_PORTION);
+  const totalPortions = portions.length;
 
   const wordTimestamps = [];
   let timeBaseMs = 0;
-  for (let i = 0; i < parts.length; i++) {
-    report(STAGE.SYNTHESIZING, { part: i + 1, totalParts: parts.length });
-    const { blob, wordTimestamps: localTimestamps, durationMs } = await synthesizeLongText(
-      parts[i].text,
-      voice,
-      {
-        onProgress: (chunk, totalChunks) => {
-          report(STAGE.SYNTHESIZING, {
-            part: i + 1,
-            totalParts: parts.length,
-            chunk,
-            totalChunks,
-          });
-        },
+
+  for (let i = 0; i < totalPortions; i++) {
+    report(STAGE.SYNTHESIZING, { part: i + 1, totalParts: totalPortions });
+
+    let portionResult = null;
+    let synthError = null;
+
+    // Retry each small portion up to 3 times with backoff if network or server hiccups occur
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        portionResult = await synthesizePortion(portions[i].text, voice);
+        synthError = null;
+        break;
+      } catch (err) {
+        synthError = err;
+        console.warn(`Portion ${i + 1}/${totalPortions} failed on attempt ${attempt + 1}:`, err);
+        await sleep(1500 * (attempt + 1));
       }
-    );
-    await opfs.writeStream(
-      `${OPFS_PATHS.PARTS_DIR}/part_${String(i + 1).padStart(2, "0")}.mp3`,
-      blob
-    );
-    for (const { charOffset, timeMs } of localTimestamps) {
+    }
+
+    if (!portionResult) {
+      throw synthError || new Error(`Failed to synthesize audio for portion ${i + 1}/${totalPortions}.`);
+    }
+
+    // Immediately save portion audio to disk in OPFS with 5-digit index padding
+    const partFileName = `${OPFS_PATHS.PARTS_DIR}/part_${String(i + 1).padStart(5, "0")}.mp3`;
+    await opfs.writeStream(partFileName, portionResult.blob);
+
+    // Map timestamps relative to the entire audiobook
+    for (const { charOffset, timeMs } of portionResult.wordTimestamps) {
       wordTimestamps.push({
-        char: parts[i].startChar + charOffset,
+        char: portions[i].startChar + charOffset,
         timeMs: timeBaseMs + timeMs,
       });
     }
-    timeBaseMs += durationMs;
+    timeBaseMs += portionResult.durationMs;
+
+    // "take time to generate audio" - pacing delay between portions to protect against Edge-TTS rate limits
+    if (i < totalPortions - 1) {
+      await sleep(TTS_PORTION_DELAY_MS);
+    }
   }
+
+  // Persist the transcript mapping
   await opfs.writeJSON(OPFS_PATHS.TRANSCRIPT_MAP, wordTimestamps);
 
-  // --- Stage 4: stitch parts, purge intermediates ---
+  // --- Stage 4: Merge smaller portions into final audiobook ---
   report(STAGE.STITCHING, {});
   await stitchAndPurgeParts();
 

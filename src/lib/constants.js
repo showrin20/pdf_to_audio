@@ -39,7 +39,9 @@ export const STAGE = {
   ERROR: "error",
 };
 
-export const WORDS_PER_CLEAN_WINDOW = 2500;
-export const WORDS_PER_AUDIO_PART = 7500; // ~50 minutes at ~150 wpm narration
+export const WORDS_PER_CLEAN_WINDOW = 2000;
+export const WORDS_PER_AUDIO_PORTION = 180; // ~1-1.5 min of speech per portion
+export const TTS_PORTION_DELAY_MS = 400; // Pacing delay between TTS requests to prevent rate limiting
+export const GEMINI_REQUEST_DELAY_MS = 1000; // Pacing delay between Gemini cleaning requests
 export const DEFAULT_VOICE = "en-GB-SoniaNeural";
 export const GEMINI_MODEL = "gemini-3.1-flash-lite";

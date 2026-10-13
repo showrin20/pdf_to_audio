@@ -31,24 +31,64 @@ function groupIntoLines(items) {
   }
   return lines.map((line) => {
     const ordered = line.items.sort((a, b) => a.x - b.x);
-    return ordered.map((i) => i.str).join("").replace(/\s+$/u, "");
+    let lineStr = "";
+    for (let i = 0; i < ordered.length; i++) {
+      const item = ordered[i];
+      if (i > 0) {
+        const prev = ordered[i - 1];
+        const prevEndsSpace = prev.str.endsWith(" ");
+        const currStartsSpace = item.str.startsWith(" ");
+        const hasGap = item.x > prev.x + prev.width + 1;
+        if (!prevEndsSpace && !currStartsSpace && (hasGap || !prev.str.endsWith("-"))) {
+          lineStr += " ";
+        }
+      }
+      lineStr += item.str;
+    }
+    return lineStr.trim();
   });
 }
 
-function detectColumns(items, pageWidth) {
-  if (items.length < 20) return null; // too sparse to bother
+function extractPageLayout(items, pageWidth) {
+  if (items.length < 20) return groupIntoLines(items);
+
   const mid = pageWidth / 2;
   const left = items.filter((i) => i.cx < mid);
   const right = items.filter((i) => i.cx >= mid);
+
   if (left.length < items.length * 0.15 || right.length < items.length * 0.15) {
-    return null; // lopsided -> not really two columns
+    return groupIntoLines(items);
   }
-  // A real two-column layout has a visible gutter: check that few items straddle the midline.
+
   const straddlers = items.filter(
     (i) => i.x < mid - 5 && i.x + i.width > mid + 5
   );
-  if (straddlers.length > items.length * 0.1) return null;
-  return { left, right };
+
+  // If very few straddlers (<8%), the page is a standard two-column layout
+  if (straddlers.length <= items.length * 0.08) {
+    return [...groupIntoLines(left), ...groupIntoLines(right)];
+  }
+
+  // Hybrid layout (typical for page 1: wide title/authors/abstract header across the top,
+  // followed by two columns for the main body)
+  const wideStraddlers = straddlers.filter((i) => i.width > pageWidth * 0.2);
+  if (wideStraddlers.length > 0) {
+    const minY = Math.min(...wideStraddlers.map((i) => i.y));
+    const headerItems = items.filter((i) => i.y >= minY - LINE_Y_TOLERANCE);
+    const bodyItems = items.filter((i) => i.y < minY - LINE_Y_TOLERANCE);
+
+    const bodyLeft = bodyItems.filter((i) => i.cx < mid);
+    const bodyRight = bodyItems.filter((i) => i.cx >= mid);
+    if (bodyLeft.length >= 8 && bodyRight.length >= 8) {
+      return [
+        ...groupIntoLines(headerItems),
+        ...groupIntoLines(bodyLeft),
+        ...groupIntoLines(bodyRight),
+      ];
+    }
+  }
+
+  return groupIntoLines(items);
 }
 
 async function extractPage(page) {
@@ -64,13 +104,7 @@ async function extractPage(page) {
       cx: i.transform[4] + i.width / 2,
     }));
 
-  const columns = detectColumns(items, viewport.width);
-  let lines;
-  if (columns) {
-    lines = [...groupIntoLines(columns.left), ...groupIntoLines(columns.right)];
-  } else {
-    lines = groupIntoLines(items);
-  }
+  const lines = extractPageLayout(items, viewport.width);
   return lines.join("\n");
 }
 

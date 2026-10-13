@@ -137,19 +137,17 @@ function renderState(state) {
 function progressFraction(state) {
   switch (state.stage) {
     case STAGE.EXTRACTING:
-      return state.totalPages ? (state.page / state.totalPages) * 25 : 2;
+      return state.totalPages ? (state.page / state.totalPages) * 20 : 2;
     case STAGE.CLEANING:
-      return 28;
+      return state.totalWindows
+        ? 20 + (state.window / state.totalWindows) * 15
+        : 25;
     case STAGE.SYNTHESIZING: {
-      if (!state.totalParts) return 30;
-      const partBase = ((state.part - 1) / state.totalParts) * 55;
-      const chunkFraction = state.totalChunks
-        ? (state.chunk / state.totalChunks) * (55 / state.totalParts)
-        : (state.part / state.totalParts) * 55;
-      return 30 + (state.totalChunks ? partBase + chunkFraction : chunkFraction);
+      if (!state.totalParts) return 35;
+      return 35 + (state.part / state.totalParts) * 55;
     }
     case STAGE.STITCHING:
-      return 90;
+      return 92;
     default:
       return 0;
   }
@@ -160,20 +158,18 @@ function progressLabel(state) {
     case STAGE.EXTRACTING:
       return state.totalPages
         ? `Extracting page ${state.page}/${state.totalPages}…`
-        : "Reading PDF…";
+        : "Reading PDF from page 1…";
     case STAGE.CLEANING:
-      return "Cleaning text with Gemini…";
+      return state.totalWindows
+        ? `Cleaning text with Gemini (${state.window}/${state.totalWindows})…`
+        : "Cleaning text with Gemini…";
     case STAGE.SYNTHESIZING: {
-      if (!state.totalParts) return "Narrating…";
-      const partStr = `part ${state.part}/${state.totalParts}`;
-      const chunkStr =
-        state.chunk && state.totalChunks
-          ? ` (${Math.round((state.chunk / state.totalChunks) * 100)}%)`
-          : "";
-      return `Narrating ${partStr}${chunkStr}…`;
+      if (!state.totalParts) return "Generating audio…";
+      const pct = Math.round((state.part / state.totalParts) * 100);
+      return `Narrating portion ${state.part}/${state.totalParts} (${pct}%)…`;
     }
     case STAGE.STITCHING:
-      return "Stitching final audiobook…";
+      return "Merging audio portions into final audiobook…";
     default:
       return "Working…";
   }

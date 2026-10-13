@@ -362,7 +362,7 @@ function splitIntoTtsChunks(text, wordsPerChunk = WORDS_PER_TTS_CHUNK) {
 // Matches each returned word against the source chunk text (starting from
 // a moving cursor) to recover its character offset, so timing data can be
 // tied back to specific positions in the transcript.
-function locateWordOffsets(chunkText, wordBoundaries) {
+export function locateWordOffsets(chunkText, wordBoundaries) {
   let cursor = 0;
   const located = [];
   for (const { word, offsetMs } of wordBoundaries) {
@@ -373,6 +373,27 @@ function locateWordOffsets(chunkText, wordBoundaries) {
     cursor = idx + word.length;
   }
   return located;
+}
+
+/**
+ * Synthesizes a single portion of text (~150-200 words).
+ * Returns { blob, wordTimestamps, durationMs } where wordTimestamps are
+ * [{ charOffset, timeMs }] relative to this portion.
+ */
+export async function synthesizePortion(text, voice) {
+  await syncServerClock();
+  const result = await synthesizeChunkAdaptive(text, voice);
+  const wordTimestamps = locateWordOffsets(text, result.wordBoundaries);
+  const last = result.wordBoundaries[result.wordBoundaries.length - 1];
+  const durationMs = last
+    ? last.offsetMs + last.durationMs
+    : estimateDurationMs(text);
+
+  return {
+    blob: result.blob,
+    wordTimestamps,
+    durationMs,
+  };
 }
 
 /**
@@ -411,7 +432,7 @@ export async function synthesizeLongText(text, voice, { onProgress } = {}) {
   return { blob: new Blob(blobs, { type: "audio/mpeg" }), wordTimestamps, durationMs: timeBaseMs };
 }
 
-function estimateDurationMs(text) {
+export function estimateDurationMs(text) {
   const words = text.split(/\s+/).filter(Boolean).length;
   return (words / 150) * 60_000; // ~150 wpm fallback estimate
 }

@@ -42,12 +42,28 @@ export async function writeStream(path, source) {
   await writable.close();
 }
 
-async function pump(reader, writable) {
+export async function pump(reader, writable) {
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     await writable.write(value);
   }
+}
+
+// Merges multiple OPFS files sequentially into a single target file using streams.
+export async function streamMergeFiles(targetPath, sourcePaths) {
+  const { dirPath, name } = splitPath(targetPath);
+  const dir = await getDir(dirPath);
+  const handle = await dir.getFileHandle(name, { create: true });
+  const writable = await handle.createWritable();
+
+  for (const srcPath of sourcePaths) {
+    const file = await readFile(srcPath);
+    const reader = file.stream().getReader();
+    await pump(reader, writable);
+  }
+
+  await writable.close();
 }
 
 // Appends text/bytes to an existing (or new) file.

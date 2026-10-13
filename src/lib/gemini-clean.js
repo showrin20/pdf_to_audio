@@ -4,23 +4,23 @@ const SYSTEM_INSTRUCTION = `You are a precision text-cleaning and text-organizat
 Your ONLY function is to remove non-readable garbage text and organize the reading flow.
 
 CRITICAL CONSTRAINTS:
-1. DO NOT CHANGE ANY WORDS. Do not rewrite, paraphrase, simplify, or edit the author's vocabulary.
-2. DO NOT ADD ANY WORDS. Do not add introductions, explanations, summaries, or filler phrases (never output "Here is the cleaned text:").
-3. REMOVE ALL GARBAGE TEXT:
+1. ALWAYS START FROM THE VERY FIRST PAGE AND FIRST LINE:
+   - Always preserve and include the document title, subtitle, chapter headings, and author name from the first page.
+   - Do NOT omit, skip, or truncate the first page or document opening.
+2. DO NOT CHANGE ANY WORDS. Do not rewrite, paraphrase, simplify, or edit the author's vocabulary.
+3. DO NOT ADD ANY WORDS. Do not add introductions, explanations, summaries, or filler phrases (never output "Here is the cleaned text:").
+4. REMOVE NON-READABLE GARBAGE TEXT:
    - Margin line serial numbers (e.g., "1\\n2\\n3...76\\n")
-   - Running headers and footers (e.g., "WACV 2027 Submission #NNNN", "arXiv:2505.19291v3...")
-   - Page numbering digits at page boundaries (e.g., standalone "1", "2", "3")
-   - Author metadata, email addresses, affiliations, and dates
+   - Running headers and footers (e.g., "WACV 2027 Submission #NNNN", "arXiv:2505.19291v3...", page numbers)
    - In-text citation callouts (e.g., "[17, 46]", "[28]", "[1, 51]")
    - Figure and table diagram labels and data cells that disrupt narrative flow
    - End-of-line hyphens (reconnect split words such as "prod-ucts" -> "products")
-4. ORGANIZE:
-   - If the raw text is from a two-column layout, reorder it so that the entire first column is read top-to-bottom, followed by the entire second column.
+5. ORGANIZE:
    - Group sentences into clean, readable paragraphs separated by double newlines.
-5. OUTPUT:
-   - Output ONLY the verbatim, cleaned author text.`;
+6. OUTPUT:
+   - Output ONLY the verbatim, cleaned author text starting from the beginning.`;
 
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 5;
 
 async function callGemini(apiKey, windowText, model) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
@@ -40,9 +40,16 @@ async function callGemini(apiKey, windowText, model) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (res.status === 429 || res.status >= 500) {
-        lastError = new Error(`Gemini ${res.status}`);
-        await sleep(600 * (attempt + 1));
+      if (res.status === 429) {
+        // Rate limit: back off progressively (e.g. 5s, 10s, 15s)
+        const delay = 5000 * (attempt + 1);
+        console.warn(`Gemini rate limited (429). Waiting ${delay}ms before retry ${attempt + 1}...`);
+        await sleep(delay);
+        continue;
+      }
+      if (res.status >= 500) {
+        lastError = new Error(`Gemini server error: ${res.status}`);
+        await sleep(2000 * (attempt + 1));
         continue;
       }
       if (!res.ok) {
@@ -54,18 +61,59 @@ async function callGemini(apiKey, windowText, model) {
       return text.trim();
     } catch (err) {
       lastError = err;
-      await sleep(600 * (attempt + 1));
+      await sleep(2000 * (attempt + 1));
     }
   }
   throw lastError;
 }
 
-function sleep(ms) {
+export function localFallbackClean(rawText) {
+  return rawText
+    // Remove standalone line numbers or page numbers
+    .replace(/^\s*\d{1,4}\s*$/gm, "")
+    // Remove citation brackets like [1], [1, 2], [1-3]
+    .replace(/\[\d+(?:[,\s–-]+\d+)*\]/g, "")
+    // Reconnect hyphenated words split across lines
+    .replace(/(\w+)-\n(\w+)/g, "$1$2")
+    // Normalize excessive newlines to double newlines
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function wordCount(text) {
   return text.split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Splits extracted text into paragraph-respecting windows of ~windowWords each
+ * for reliable, paced Gemini cleaning.
+ */
+export function partitionTextIntoWindows(text, windowWords = WORDS_PER_CLEAN_WINDOW) {
+  const paragraphs = text.split(/\n{2,}/);
+  const windows = [];
+  let current = "";
+  let currentWordCount = 0;
+
+  for (const para of paragraphs) {
+    const trimmed = para.trim();
+    if (!trimmed) continue;
+    const words = trimmed.split(/\s+/).filter(Boolean).length;
+    if (currentWordCount + words > windowWords && current.trim()) {
+      windows.push(current.trim());
+      current = "";
+      currentWordCount = 0;
+    }
+    current += (current ? "\n\n" : "") + trimmed;
+    currentWordCount += words;
+  }
+  if (current.trim()) {
+    windows.push(current.trim());
+  }
+  return windows;
 }
 
 /**
@@ -119,5 +167,14 @@ export class TextWindower {
 }
 
 export async function cleanWindow(apiKey, windowText, model = GEMINI_MODEL) {
-  return callGemini(apiKey, windowText, model);
+  if (!apiKey) {
+    return localFallbackClean(windowText);
+  }
+  try {
+    const cleaned = await callGemini(apiKey, windowText, model);
+    return cleaned || localFallbackClean(windowText);
+  } catch (err) {
+    console.warn("Gemini clean failed after retries; falling back to local cleaned text:", err);
+    return localFallbackClean(windowText);
+  }
 }
