@@ -10,10 +10,34 @@
 // concatenation of whole files plays back correctly).
 
 const TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
-const SEC_MS_GEC_VERSION = "1-130.0.2849.68";
+const SEC_MS_GEC_VERSION = "1-143.0.3650.75";
 const WS_ENDPOINT = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1";
 
-const WORDS_PER_TTS_CHUNK = 700;
+const WORDS_PER_TTS_CHUNK = 100;
+
+let clockSkewSeconds = 0;
+
+/**
+ * Syncs the local clock with Microsoft's server time from the Date header
+ * to prevent clock-drift signature rejections.
+ */
+export async function syncServerClock() {
+  try {
+    const res = await fetch(
+      `https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=${TRUSTED_CLIENT_TOKEN}`,
+      { method: "HEAD", cache: "no-store" }
+    );
+    const dateStr = res.headers.get("Date");
+    if (dateStr) {
+      const serverTimeMs = new Date(dateStr).getTime();
+      if (!Number.isNaN(serverTimeMs)) {
+        clockSkewSeconds = Math.round((serverTimeMs - Date.now()) / 1000);
+      }
+    }
+  } catch {
+    // Non-fatal fallback to system clock
+  }
+}
 
 function randomHex(bytes) {
   const arr = new Uint8Array(bytes);
@@ -34,15 +58,21 @@ async function sha256HexUpper(input) {
 // trusted client token appended to the current time (rounded down to the
 // nearest 5 minutes), expressed as Windows file-time 100ns ticks.
 async function generateSecMsGec() {
-  const WIN_EPOCH_OFFSET_SECONDS = 11644473600;
-  let ticks = Math.floor(Date.now() / 1000) + WIN_EPOCH_OFFSET_SECONDS;
-  ticks -= ticks % 300;
-  const windowsTicks = ticks * 10_000_000;
+  // Windows filetime ticks (100ns units) for a present-day timestamp exceed
+  // Number.MAX_SAFE_INTEGER, so this must be done in BigInt -- a plain
+  // Number here silently loses precision and produces a signature the
+  // server will reject.
+  const WIN_EPOCH_OFFSET_SECONDS = 11644473600n;
+  const currentUnixSec = BigInt(Math.floor(Date.now() / 1000) + clockSkewSeconds);
+  let ticks = currentUnixSec + WIN_EPOCH_OFFSET_SECONDS;
+  ticks -= ticks % 300n;
+  const windowsTicks = ticks * 10_000_000n;
   return sha256HexUpper(`${windowsTicks}${TRUSTED_CLIENT_TOKEN}`);
 }
 
 function escapeSsml(text) {
   return text
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -118,9 +148,9 @@ function parseBinaryAudioFrame(buffer) {
 }
 
 /**
- * Synthesizes one chunk of text (keep this under ~1000 words) to an MP3 Blob.
- * Resolves with { blob, wordBoundaries } where wordBoundaries are timings
- * relative to the start of this chunk's audio.
+ * Synthesizes one portion of text to an MP3 Blob.
+ * Uses an inactivity timeout (reset on every received audio frame) so active
+ * streams are never cut off prematurely.
  */
 export function synthesizeChunk(text, voice) {
   return new Promise(async (resolve, reject) => {
@@ -137,10 +167,30 @@ export function synthesizeChunk(text, voice) {
 
       const audioParts = [];
       const wordBoundaries = [];
-      const timeout = setTimeout(() => {
-        reject(new Error("Edge-TTS synthesis timed out"));
+      let settled = false;
+
+      // Inactivity timeout: triggers if server sends no data for 15 seconds
+      let inactivityTimer = null;
+      const resetInactivityTimer = () => {
+        if (inactivityTimer) clearTimeout(inactivityTimer);
+        inactivityTimer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          socket.close();
+          reject(new Error("Edge-TTS synthesis timed out (no data from server for 15s)"));
+        }, 15_000);
+      };
+
+      // Hard ceiling timeout: 45s total max per chunk
+      const hardCeiling = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        if (inactivityTimer) clearTimeout(inactivityTimer);
         socket.close();
-      }, 30_000);
+        reject(new Error("Edge-TTS synthesis timed out (chunk exceeded 45s)"));
+      }, 45_000);
+
+      resetInactivityTimer();
 
       socket.onopen = () => {
         socket.send(buildSpeechConfigMessage());
@@ -148,12 +198,15 @@ export function synthesizeChunk(text, voice) {
       };
 
       socket.onmessage = (event) => {
+        resetInactivityTimer();
         if (typeof event.data === "string") {
           if (event.data.includes("Path:audio.metadata")) {
             const jsonStart = event.data.indexOf("\r\n\r\n") + 4;
             wordBoundaries.push(...parseWordBoundaries(event.data.slice(jsonStart)));
           } else if (event.data.includes("Path:turn.end")) {
-            clearTimeout(timeout);
+            settled = true;
+            if (inactivityTimer) clearTimeout(inactivityTimer);
+            clearTimeout(hardCeiling);
             socket.close();
             resolve({ blob: new Blob(audioParts, { type: "audio/mpeg" }), wordBoundaries });
           }
@@ -164,13 +217,125 @@ export function synthesizeChunk(text, voice) {
       };
 
       socket.onerror = () => {
-        clearTimeout(timeout);
-        reject(new Error("Edge-TTS WebSocket error"));
+        // The browser's WebSocket "error" event never carries a reason.
+        // onclose fires right after with the actual close code.
+      };
+
+      socket.onclose = (event) => {
+        if (settled) return;
+        settled = true;
+        if (inactivityTimer) clearTimeout(inactivityTimer);
+        clearTimeout(hardCeiling);
+        let detail = `Edge-TTS WebSocket closed before completion (code ${event.code}`;
+        if (event.reason) detail += `, reason: ${event.reason}`;
+        if (event.code === 1006) {
+          detail +=
+            "). Microsoft rejected the connection handshake (HTTP 403 Forbidden). Ensure the extension is reloaded in chrome://extensions so declarativeNetRequest headers are active.";
+        } else {
+          detail += ")";
+        }
+        reject(new Error(detail));
       };
     } catch (err) {
       reject(err);
     }
   });
+}
+
+// Splits a text block into roughly equal halves at sentence/punctuation boundary
+function splitTextIntoHalves(text) {
+  const sentences = text.match(/[^.!?\n]+[.!?]?\s*/g) || [text];
+  if (sentences.length <= 1) {
+    const words = text.split(/\s+/).filter(Boolean);
+    const mid = Math.max(1, Math.floor(words.length / 2));
+    return [words.slice(0, mid).join(" "), words.slice(mid).join(" ")].filter(Boolean);
+  }
+  const midSentence = Math.ceil(sentences.length / 2);
+  const first = sentences.slice(0, midSentence).join("").trim();
+  const second = sentences.slice(midSentence).join("").trim();
+  return [first, second].filter(Boolean);
+}
+
+// Merges multiple TTS results into a single { blob, wordBoundaries }
+function mergeTtsResults(results, subTexts) {
+  const mergedParts = [];
+  const mergedBoundaries = [];
+  let cumulativeDurationMs = 0;
+
+  for (let i = 0; i < results.length; i++) {
+    const { blob, wordBoundaries } = results[i];
+    mergedParts.push(blob);
+
+    for (const boundary of wordBoundaries) {
+      mergedBoundaries.push({
+        word: boundary.word,
+        offsetMs: boundary.offsetMs + cumulativeDurationMs,
+        durationMs: boundary.durationMs,
+      });
+    }
+
+    const last = wordBoundaries[wordBoundaries.length - 1];
+    const subDurationMs = last
+      ? last.offsetMs + last.durationMs
+      : estimateDurationMs(subTexts[i] || "");
+    cumulativeDurationMs += subDurationMs;
+  }
+
+  return {
+    blob: new Blob(mergedParts, { type: "audio/mpeg" }),
+    wordBoundaries: mergedBoundaries,
+  };
+}
+
+/**
+ * Synthesizes a chunk of text. If it times out or encounters a failure,
+ * it automatically splits into smaller portions (down to sentences/words),
+ * synthesizes each sub-portion, and merges all audio and word timings seamlessly.
+ */
+export async function synthesizeChunkAdaptive(text, voice) {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return { blob: new Blob([], { type: "audio/mpeg" }), wordBoundaries: [] };
+  }
+
+  const words = trimmed.split(/\s+/).filter(Boolean);
+
+  // If text is already very small (<= 25 words), try with direct retry
+  if (words.length <= 25) {
+    try {
+      return await synthesizeChunk(trimmed, voice);
+    } catch (err) {
+      console.warn("Retrying small chunk...", err?.message || err);
+      await syncServerClock();
+      await new Promise((r) => setTimeout(r, 1000));
+      return await synthesizeChunk(trimmed, voice);
+    }
+  }
+
+  try {
+    return await synthesizeChunk(trimmed, voice);
+  } catch (err) {
+    console.warn(
+      `Portion synthesis timed out or failed (${words.length} words). Subdividing into smaller portions and merging audio...`,
+      err?.message || err
+    );
+
+    const subChunks = splitTextIntoHalves(trimmed);
+    if (subChunks.length <= 1) {
+      // Cannot split further; retry once after clock sync
+      await syncServerClock();
+      await new Promise((r) => setTimeout(r, 1000));
+      return await synthesizeChunk(trimmed, voice);
+    }
+
+    const results = [];
+    for (const sub of subChunks) {
+      if (!sub.trim()) continue;
+      results.push(await synthesizeChunkAdaptive(sub.trim(), voice));
+    }
+
+    return mergeTtsResults(results, subChunks);
+  }
 }
 
 // Splits text into sentence-respecting chunks of roughly WORDS_PER_TTS_CHUNK
@@ -211,28 +376,23 @@ function locateWordOffsets(chunkText, wordBoundaries) {
 }
 
 /**
- * Synthesizes a full ~50-minute text part into one MP3 Blob, chunking
- * internally to stay within safe per-request limits. Retries a chunk once
- * on transient WebSocket failure before giving up.
+ * Synthesizes a full text part into one MP3 Blob, breaking into small
+ * portions (~100 words) and adapting on timeout by sub-chunking and merging.
  *
  * Returns { blob, wordTimestamps, durationMs } where wordTimestamps are
  * [{ charOffset, timeMs }] with charOffset relative to the start of `text`
  * and timeMs relative to the start of this part's audio.
  */
 export async function synthesizeLongText(text, voice, { onProgress } = {}) {
-  const chunks = splitIntoTtsChunks(text);
+  await syncServerClock();
+  const chunks = splitIntoTtsChunks(text, WORDS_PER_TTS_CHUNK);
   const blobs = [];
   const wordTimestamps = [];
   let charBase = 0;
   let timeBaseMs = 0;
 
   for (let i = 0; i < chunks.length; i++) {
-    let result;
-    try {
-      result = await synthesizeChunk(chunks[i], voice);
-    } catch {
-      result = await synthesizeChunk(chunks[i], voice); // one retry
-    }
+    const result = await synthesizeChunkAdaptive(chunks[i], voice);
     blobs.push(result.blob);
 
     const located = locateWordOffsets(chunks[i], result.wordBoundaries);
@@ -244,9 +404,6 @@ export async function synthesizeLongText(text, voice, { onProgress } = {}) {
     const chunkDurationMs = last ? last.offsetMs + last.durationMs : estimateDurationMs(chunks[i]);
     timeBaseMs += chunkDurationMs;
     charBase += chunks[i].length;
-    // Account for the separator re-inserted between chunks by the caller's
-    // joining of `text`; chunks are produced by splitIntoTtsChunks which
-    // keeps original whitespace, so no extra offset is needed here.
 
     if (onProgress) onProgress(i + 1, chunks.length);
   }
@@ -258,3 +415,4 @@ function estimateDurationMs(text) {
   const words = text.split(/\s+/).filter(Boolean).length;
   return (words / 150) * 60_000; // ~150 wpm fallback estimate
 }
+

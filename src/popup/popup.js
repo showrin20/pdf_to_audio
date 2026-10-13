@@ -120,8 +120,14 @@ function progressFraction(state) {
       return state.totalPages ? (state.page / state.totalPages) * 25 : 2;
     case STAGE.CLEANING:
       return 28;
-    case STAGE.SYNTHESIZING:
-      return state.totalParts ? 30 + (state.part / state.totalParts) * 55 : 30;
+    case STAGE.SYNTHESIZING: {
+      if (!state.totalParts) return 30;
+      const partBase = ((state.part - 1) / state.totalParts) * 55;
+      const chunkFraction = state.totalChunks
+        ? (state.chunk / state.totalChunks) * (55 / state.totalParts)
+        : (state.part / state.totalParts) * 55;
+      return 30 + (state.totalChunks ? partBase + chunkFraction : chunkFraction);
+    }
     case STAGE.STITCHING:
       return 90;
     default:
@@ -137,10 +143,15 @@ function progressLabel(state) {
         : "Reading PDF…";
     case STAGE.CLEANING:
       return "Cleaning text with Gemini…";
-    case STAGE.SYNTHESIZING:
-      return state.totalParts
-        ? `Narrating part ${state.part}/${state.totalParts}…`
-        : "Narrating…";
+    case STAGE.SYNTHESIZING: {
+      if (!state.totalParts) return "Narrating…";
+      const partStr = `part ${state.part}/${state.totalParts}`;
+      const chunkStr =
+        state.chunk && state.totalChunks
+          ? ` (${Math.round((state.chunk / state.totalChunks) * 100)}%)`
+          : "";
+      return `Narrating ${partStr}${chunkStr}…`;
+    }
     case STAGE.STITCHING:
       return "Stitching final audiobook…";
     default:

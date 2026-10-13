@@ -81,7 +81,17 @@ async function runPipeline({ apiKey, model, voice }) {
     report(STAGE.SYNTHESIZING, { part: i + 1, totalParts: parts.length });
     const { blob, wordTimestamps: localTimestamps, durationMs } = await synthesizeLongText(
       parts[i].text,
-      voice
+      voice,
+      {
+        onProgress: (chunk, totalChunks) => {
+          report(STAGE.SYNTHESIZING, {
+            part: i + 1,
+            totalParts: parts.length,
+            chunk,
+            totalChunks,
+          });
+        },
+      }
     );
     await opfs.writeStream(
       `${OPFS_PATHS.PARTS_DIR}/part_${String(i + 1).padStart(2, "0")}.mp3`,

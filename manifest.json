@@ -24,12 +24,23 @@
     "offscreen",
     "downloads",
     "storage",
-    "unlimitedStorage"
+    "unlimitedStorage",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "https://generativelanguage.googleapis.com/*",
-    "https://speech.platform.bing.com/*"
+    "https://speech.platform.bing.com/*",
+    "wss://speech.platform.bing.com/*"
   ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ruleset_edge_tts",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
   "web_accessible_resources": [
     {
       "resources": ["src/player/player.html"],

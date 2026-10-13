@@ -90,7 +90,8 @@ function stripBareNumberLines(pageText) {
  */
 export async function extractPdfText(arrayBuffer, onPage) {
   const pdfjs = await loadPdfjs();
-  const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+  const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
+  const doc = await loadingTask.promise;
   const total = doc.numPages;
   for (let pageNum = 1; pageNum <= total; pageNum++) {
     const page = await doc.getPage(pageNum);
@@ -99,5 +100,5 @@ export async function extractPdfText(arrayBuffer, onPage) {
     await onPage(pageNum, cleanedOfNumbers, total);
     page.cleanup();
   }
-  await doc.destroy();
+  await loadingTask.destroy();
 }

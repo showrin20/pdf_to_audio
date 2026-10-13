@@ -4,6 +4,59 @@ import * as env from "../lib/env.generated.js";
 
 const OFFSCREEN_URL = "src/offscreen/offscreen.html";
 
+async function ensureDnrRules() {
+  if (!chrome.declarativeNetRequest) return;
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [1],
+      addRules: [
+        {
+          id: 1,
+          priority: 1,
+          action: {
+            type: "modifyHeaders",
+            requestHeaders: [
+              {
+                header: "User-Agent",
+                operation: "set",
+                value:
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0",
+              },
+              {
+                header: "Origin",
+                operation: "set",
+                value: "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold",
+              },
+              {
+                header: "Pragma",
+                operation: "set",
+                value: "no-cache",
+              },
+              {
+                header: "Cache-Control",
+                operation: "set",
+                value: "no-cache",
+              },
+            ],
+          },
+          condition: {
+            urlFilter: "||speech.platform.bing.com",
+            resourceTypes: ["websocket", "xmlhttprequest"],
+          },
+        },
+      ],
+    });
+  } catch (err) {
+    console.warn("Failed to register dynamic DNR rules:", err);
+  }
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  ensureDnrRules();
+});
+ensureDnrRules();
+
+
 async function ensureOffscreenDocument() {
   const existing = await chrome.runtime.getContexts({
     contextTypes: ["OFFSCREEN_DOCUMENT"],
