@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "PDF to Audiobook",
+  "name": "lazyears",
   "version": "0.1.0",
   "description": "Turn any PDF into a narrated audiobook: local extraction, AI text cleanup, and offline British-voice narration.",
   "icons": {
@@ -10,6 +10,7 @@
   },
   "action": {
     "default_popup": "src/popup/popup.html",
+    "default_title": "PDF to Audiobook",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

@@ -4,12 +4,22 @@
     <meta charset="utf-8" />
     <link rel="stylesheet" href="popup.css" />
     <link rel="stylesheet" href="../lib/mascot.css" />
+    <link rel="stylesheet" href="../lib/how-to-use.css" />
   </head>
   <body>
     <main>
       <header class="app-header">
         <h1>PDF to Audiobook</h1>
-        <div id="mascotSlot" class="mascot-slot"></div>
+        <div class="header-actions">
+          <button id="howToUseBtn" class="icon-btn" aria-label="How to use">
+            <svg viewBox="0 0 20 20">
+              <circle cx="10" cy="10" r="8.5" fill="none" stroke="#94a3b8" stroke-width="1.6" />
+              <path d="M7.3,7.6 a2.7,2.4 0 1 1 4.2,2 c-0.9,0.7 -1.5,1.2 -1.5,2.3" fill="none" stroke="#94a3b8" stroke-width="1.6" stroke-linecap="round" />
+              <circle cx="10" cy="14.6" r="0.9" fill="#94a3b8" />
+            </svg>
+          </button>
+          <div id="mascotSlot" class="mascot-slot"></div>
+        </div>
       </header>
 
       <details id="settings">
@@ -68,12 +78,12 @@
       <section id="done" hidden>
         <button id="openPlayer">Open Player</button>
         <button id="downloadBtn">Download Audiobook</button>
-        <button id="startOver" class="secondary">Start Over</button>
+        <button id="newGeneration" class="secondary">New Generation</button>
       </section>
 
       <section id="errorBox" hidden>
         <p id="errorText"></p>
-        <button id="dismissError" class="secondary">Start Over</button>
+        <button id="dismissError" class="secondary">Try Again</button>
       </section>
     </main>
     <script type="module" src="popup.js"></script>

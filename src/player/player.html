@@ -2,22 +2,29 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Audiobook Player</title>
+    <title>PDF to Audiobook</title>
     <link rel="stylesheet" href="player.css" />
     <link rel="stylesheet" href="../lib/mascot.css" />
   </head>
   <body>
+    <div id="readingProgress" class="reading-progress"><div id="readingProgressFill"></div></div>
+
     <header>
       <div class="title-group">
         <div id="mascotSlot" class="mascot-slot"></div>
-        <h1 id="title">Audiobook</h1>
+        <div class="title-text">
+          <span class="brand">PDF to Audiobook</span>
+          <h1 id="title">Audiobook</h1>
+        </div>
       </div>
       <div class="actions">
         <button id="downloadBtn">Download</button>
       </div>
     </header>
 
-    <audio id="audio" controls></audio>
+    <div class="player-card">
+      <audio id="audio" controls></audio>
+    </div>
 
     <main id="transcript"></main>
 

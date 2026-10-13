@@ -13,6 +13,7 @@ export const STORAGE_KEYS = {
   TTS_VOICE: "ttsVoice",
   PIPELINE_STATE: "pipelineState",
   DOCUMENT_TITLE: "documentTitle",
+  HAS_SEEN_GUIDE: "hasSeenGuide",
 };
 
 // Runtime message types exchanged between popup / background / offscreen / player.

@@ -35,6 +35,34 @@ h1 {
   flex-shrink: 0;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid #334155;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-btn:hover {
+  background: #1e293b;
+  border-color: #475569;
+}
+
+.icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
 #settings {
   border: 1px solid #334155;
   border-radius: 8px;

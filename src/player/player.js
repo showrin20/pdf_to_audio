@@ -7,6 +7,7 @@ const audio = document.getElementById("audio");
 const transcriptEl = document.getElementById("transcript");
 const emptyState = document.getElementById("emptyState");
 const titleEl = document.getElementById("title");
+const readingProgressFill = document.getElementById("readingProgressFill");
 
 const mascot = createMascot({ size: 48 });
 document.getElementById("mascotSlot").appendChild(mascot);
@@ -23,6 +24,35 @@ function splitParagraphs(text) {
     cursor = start + block.length;
   }
   return paragraphs;
+}
+
+const sentenceSegmenter =
+  typeof Intl !== "undefined" && "Segmenter" in Intl
+    ? new Intl.Segmenter(undefined, { granularity: "sentence" })
+    : null;
+
+// Splits paragraph text into sentences, each tagged with its absolute char
+// offset in the full transcript, so each one can get its own seek time.
+function splitSentences(text, baseOffset) {
+  const sentences = [];
+  if (sentenceSegmenter) {
+    for (const seg of sentenceSegmenter.segment(text)) {
+      const trimmed = seg.segment.trim();
+      if (!trimmed) continue;
+      const leading = seg.segment.length - seg.segment.trimStart().length;
+      sentences.push({ start: baseOffset + seg.index + leading, text: trimmed });
+    }
+    return sentences;
+  }
+  const re = /[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const trimmed = m[0].trim();
+    if (!trimmed) continue;
+    const leading = m[0].length - m[0].trimStart().length;
+    sentences.push({ start: baseOffset + m.index + leading, text: trimmed });
+  }
+  return sentences;
 }
 
 // Returns the timeMs of the last map entry whose char offset is <= target.
@@ -69,20 +99,29 @@ async function init() {
   const nodes = [];
   for (const para of paragraphs) {
     const p = document.createElement("p");
-    p.textContent = para.text;
-    const seekTime = seekTimeForChar(map, para.start);
-    p.dataset.seekTime = String(seekTime);
-    p.addEventListener("click", () => {
-      audio.currentTime = seekTime;
-      audio.play();
-    });
+    const sentences = splitSentences(para.text, para.start);
+    for (const sentence of sentences) {
+      const span = document.createElement("span");
+      span.className = "sentence";
+      span.textContent = sentence.text + " ";
+      const seekTime = seekTimeForChar(map, sentence.start);
+      span.addEventListener("click", () => {
+        audio.currentTime = seekTime;
+        audio.play();
+      });
+      p.appendChild(span);
+      nodes.push({ el: span, seekTime });
+    }
     transcriptEl.appendChild(p);
-    nodes.push({ el: p, seekTime });
   }
 
   let activeIndex = -1;
   audio.addEventListener("timeupdate", () => {
     const t = audio.currentTime;
+    if (audio.duration) {
+      readingProgressFill.style.width = `${(t / audio.duration) * 100}%`;
+    }
+
     let idx = nodes.length - 1;
     for (let i = 0; i < nodes.length; i++) {
       if (nodes[i].seekTime > t) {
@@ -94,8 +133,11 @@ async function init() {
     if (activeIndex >= 0) nodes[activeIndex].el.classList.remove("active");
     activeIndex = idx;
     if (idx >= 0) {
-      nodes[idx].el.classList.add("active");
-      nodes[idx].el.scrollIntoView({ behavior: "smooth", block: "center" });
+      const el = nodes[idx].el;
+      el.classList.add("active");
+      const rect = el.getBoundingClientRect();
+      const inView = rect.top >= 80 && rect.bottom <= window.innerHeight - 40;
+      if (!inView) el.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   });
 }

@@ -2,6 +2,7 @@ import { MSG, STAGE, STORAGE_KEYS, OPFS_PATHS, DEFAULT_VOICE } from "../lib/cons
 import { writeStream } from "../lib/opfs.js";
 import { downloadAudiobook } from "../lib/download.js";
 import { createMascot, setMascotActive } from "../lib/mascot.js";
+import { createHowToUseOverlay } from "../lib/how-to-use.js";
 
 const mascot = createMascot({ size: 44 });
 document.getElementById("mascotSlot").appendChild(mascot);
@@ -24,15 +25,34 @@ const doneSection = document.getElementById("done");
 const errorSection = document.getElementById("errorBox");
 const errorText = document.getElementById("errorText");
 
+let guideOpen = false;
+function openHowToUse() {
+  if (guideOpen) return;
+  guideOpen = true;
+  document.body.appendChild(
+    createHowToUseOverlay(() => {
+      guideOpen = false;
+    })
+  );
+}
+
+document.getElementById("howToUseBtn").addEventListener("click", openHowToUse);
+
 async function init() {
   const stored = await chrome.storage.local.get([
     STORAGE_KEYS.GEMINI_API_KEY,
     STORAGE_KEYS.TTS_VOICE,
     STORAGE_KEYS.PIPELINE_STATE,
+    STORAGE_KEYS.HAS_SEEN_GUIDE,
   ]);
   if (stored[STORAGE_KEYS.GEMINI_API_KEY]) apiKeyInput.value = stored[STORAGE_KEYS.GEMINI_API_KEY];
   voiceSelect.value = stored[STORAGE_KEYS.TTS_VOICE] || DEFAULT_VOICE;
   renderState(stored[STORAGE_KEYS.PIPELINE_STATE] || { stage: STAGE.IDLE });
+
+  if (!stored[STORAGE_KEYS.HAS_SEEN_GUIDE]) {
+    await chrome.storage.local.set({ [STORAGE_KEYS.HAS_SEEN_GUIDE]: true });
+    openHowToUse();
+  }
 }
 
 apiKeyInput.addEventListener("change", () => {
@@ -65,7 +85,7 @@ document.getElementById("downloadBtn").addEventListener("click", async () => {
   await downloadAudiobook();
 });
 
-for (const id of ["startOver", "dismissError"]) {
+for (const id of ["newGeneration", "dismissError"]) {
   document.getElementById(id).addEventListener("click", async () => {
     await chrome.runtime.sendMessage({ type: MSG.RESET_PIPELINE });
     fileInput.value = "";
