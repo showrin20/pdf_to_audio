@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "lazyears",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Turn any PDF into a narrated audiobook: local extraction, AI text cleanup, and offline British-voice narration.",
   "icons": {
     "16": "icons/icon16.png",
@@ -26,12 +26,12 @@
     "downloads",
     "storage",
     "unlimitedStorage",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "https://generativelanguage.googleapis.com/*",
-    "https://speech.platform.bing.com/*",
-    "wss://speech.platform.bing.com/*"
+    "*://speech.platform.bing.com/*"
   ],
   "declarative_net_request": {
     "rule_resources": [

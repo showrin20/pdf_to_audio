@@ -73,73 +73,83 @@ function seekTimeForChar(map, targetChar) {
 }
 
 async function init() {
-  const ready = await exists(OPFS_PATHS.FINAL_AUDIO);
-  if (!ready) {
+  const [hasAudio, hasTranscript, hasMap] = await Promise.all([
+    exists(OPFS_PATHS.FINAL_AUDIO),
+    exists(OPFS_PATHS.CLEANED_TRANSCRIPT),
+    exists(OPFS_PATHS.TRANSCRIPT_MAP),
+  ]);
+
+  if (!hasAudio || !hasTranscript || !hasMap) {
     emptyState.hidden = false;
     return;
   }
 
-  const { [STORAGE_KEYS.DOCUMENT_TITLE]: title } = await chrome.storage.local.get(
-    STORAGE_KEYS.DOCUMENT_TITLE
-  );
-  if (title) {
-    titleEl.textContent = title;
-    document.title = `${title} — Audiobook`;
-  }
-
-  const [transcript, map, audioFile] = await Promise.all([
-    readText(OPFS_PATHS.CLEANED_TRANSCRIPT),
-    readJSON(OPFS_PATHS.TRANSCRIPT_MAP),
-    readFile(OPFS_PATHS.FINAL_AUDIO),
-  ]);
-  map.sort((a, b) => a.char - b.char);
-  audio.src = URL.createObjectURL(audioFile);
-
-  const paragraphs = splitParagraphs(transcript);
-  const nodes = [];
-  for (const para of paragraphs) {
-    const p = document.createElement("p");
-    const sentences = splitSentences(para.text, para.start);
-    for (const sentence of sentences) {
-      const span = document.createElement("span");
-      span.className = "sentence";
-      span.textContent = sentence.text + " ";
-      const seekTime = seekTimeForChar(map, sentence.start);
-      span.addEventListener("click", () => {
-        audio.currentTime = seekTime;
-        audio.play();
-      });
-      p.appendChild(span);
-      nodes.push({ el: span, seekTime });
-    }
-    transcriptEl.appendChild(p);
-  }
-
-  let activeIndex = -1;
-  audio.addEventListener("timeupdate", () => {
-    const t = audio.currentTime;
-    if (audio.duration) {
-      readingProgressFill.style.width = `${(t / audio.duration) * 100}%`;
+  try {
+    const { [STORAGE_KEYS.DOCUMENT_TITLE]: title } = await chrome.storage.local.get(
+      STORAGE_KEYS.DOCUMENT_TITLE
+    );
+    if (title) {
+      titleEl.textContent = title;
+      document.title = `${title} — Audiobook`;
     }
 
-    let idx = nodes.length - 1;
-    for (let i = 0; i < nodes.length; i++) {
-      if (nodes[i].seekTime > t) {
-        idx = i - 1;
-        break;
+    const [transcript, map, audioFile] = await Promise.all([
+      readText(OPFS_PATHS.CLEANED_TRANSCRIPT),
+      readJSON(OPFS_PATHS.TRANSCRIPT_MAP),
+      readFile(OPFS_PATHS.FINAL_AUDIO),
+    ]);
+    map.sort((a, b) => a.char - b.char);
+    audio.src = URL.createObjectURL(audioFile);
+
+    const paragraphs = splitParagraphs(transcript);
+    const nodes = [];
+    for (const para of paragraphs) {
+      const p = document.createElement("p");
+      const sentences = splitSentences(para.text, para.start);
+      for (const sentence of sentences) {
+        const span = document.createElement("span");
+        span.className = "sentence";
+        span.textContent = sentence.text + " ";
+        const seekTime = seekTimeForChar(map, sentence.start);
+        span.addEventListener("click", () => {
+          audio.currentTime = seekTime;
+          audio.play();
+        });
+        p.appendChild(span);
+        nodes.push({ el: span, seekTime });
       }
+      transcriptEl.appendChild(p);
     }
-    if (idx === activeIndex) return;
-    if (activeIndex >= 0) nodes[activeIndex].el.classList.remove("active");
-    activeIndex = idx;
-    if (idx >= 0) {
-      const el = nodes[idx].el;
-      el.classList.add("active");
-      const rect = el.getBoundingClientRect();
-      const inView = rect.top >= 80 && rect.bottom <= window.innerHeight - 40;
-      if (!inView) el.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  });
+
+    let activeIndex = -1;
+    audio.addEventListener("timeupdate", () => {
+      const t = audio.currentTime;
+      if (audio.duration) {
+        readingProgressFill.style.width = `${(t / audio.duration) * 100}%`;
+      }
+
+      let idx = nodes.length - 1;
+      for (let i = 0; i < nodes.length; i++) {
+        if (nodes[i].seekTime > t) {
+          idx = i - 1;
+          break;
+        }
+      }
+      if (idx === activeIndex) return;
+      if (activeIndex >= 0 && nodes[activeIndex]) nodes[activeIndex].el.classList.remove("active");
+      activeIndex = idx;
+      if (idx >= 0 && nodes[idx]) {
+        const el = nodes[idx].el;
+        el.classList.add("active");
+        const rect = el.getBoundingClientRect();
+        const inView = rect.top >= 80 && rect.bottom <= window.innerHeight - 40;
+        if (!inView) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+  } catch (err) {
+    console.warn("Could not load audiobook in player:", err);
+    emptyState.hidden = false;
+  }
 }
 
 init();

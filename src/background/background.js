@@ -80,8 +80,10 @@ async function closeOffscreenDocument() {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   switch (message.type) {
     case MSG.START_PIPELINE:
-      handleStart(message);
-      break;
+      handleStart(message)
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: err?.message }));
+      return true;
     case MSG.PIPELINE_PROGRESS:
       chrome.storage.local.set({
         [STORAGE_KEYS.PIPELINE_STATE]: { stage: message.stage, ...message },

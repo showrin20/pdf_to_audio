@@ -111,20 +111,25 @@ export async function exists(path) {
 }
 
 export async function remove(path, { recursive = false } = {}) {
-  const { dirPath, name } = splitPath(path);
   try {
+    const { dirPath, name } = splitPath(path);
     const dir = await getDir(dirPath, { create: false });
     await dir.removeEntry(name, { recursive });
   } catch {
-    // Already gone — fine.
+    // Already gone or parent doesn't exist — fine.
   }
 }
 
 export async function listDir(path) {
-  const dir = await getDir(path, { create: false });
-  const names = [];
-  for await (const name of dir.keys()) names.push(name);
-  return names.sort();
+  try {
+    const dir = await getDir(path, { create: false });
+    const names = [];
+    for await (const name of dir.keys()) names.push(name);
+    return names.sort();
+  } catch (err) {
+    if (err.name === "NotFoundError" || err.code === 8) return [];
+    throw err;
+  }
 }
 
 // Wipes the whole pipeline workspace (used when starting a fresh document).

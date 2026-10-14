@@ -10,18 +10,20 @@
 // concatenation of whole files plays back correctly).
 
 const TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
-const SEC_MS_GEC_VERSION = "1-143.0.3650.75";
+const SEC_MS_GEC_VERSION = "2-143.0.3650.75";
 const WS_ENDPOINT = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1";
 
 const WORDS_PER_TTS_CHUNK = 100;
 
 let clockSkewSeconds = 0;
+let clockSyncDone = false;
 
 /**
  * Syncs the local clock with Microsoft's server time from the Date header
  * to prevent clock-drift signature rejections.
  */
 export async function syncServerClock() {
+  if (clockSyncDone) return;
   try {
     const res = await fetch(
       `https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=${TRUSTED_CLIENT_TOKEN}`,
@@ -32,6 +34,7 @@ export async function syncServerClock() {
       const serverTimeMs = new Date(dateStr).getTime();
       if (!Number.isNaN(serverTimeMs)) {
         clockSkewSeconds = Math.round((serverTimeMs - Date.now()) / 1000);
+        clockSyncDone = true;
       }
     }
   } catch {
@@ -45,29 +48,195 @@ function randomHex(bytes) {
   return [...arr].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function sha256HexUpper(input) {
-  const data = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")
-    .toUpperCase();
+// --- Sec-MS-GEC v2 Token Generator ---
+const WIN_EPOCH = 11644473600n;
+
+const _SHA256_INITIAL = new Uint32Array([
+  0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
+  0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
+]);
+const _SHA256_STATE = new Uint32Array([
+  0xFD9FBEA2, 0x91243CE7, 0xBE499094, 0xCD2E1E0A,
+  0x6C006F49, 0x04BD35AB, 0xFEB0A7E4, 0x03EFFBD2,
+]);
+const _SHA256_SCHEDULE = new Uint32Array([
+  0xEB24BF9E, 0x1558691F, 0xA0C09EE2, 0x0CFA32BA,
+  0xA622EE8C, 0xD1DD9491, 0xC0DD25A0, 0xF9E70AB6,
+  0xF0C31573, 0x7058CE4E, 0x7188E606, 0x00E5AB33,
+  0xD258B060, 0x72766564,
+]);
+const _SHA256_ROUND_CONSTANTS = new Uint32Array([
+  0x428A2F98, 0x71374491, 0xB5C0FBCF, 0xE9B5DBA5,
+  0x3956C25B, 0x59F111F1, 0x923F82A4, 0xAB1C5ED5,
+  0xD807AA98, 0x12835B01, 0x243185BE, 0x550C7DC3,
+  0x72BE5D74, 0x80DEB1FE, 0x9BDC06A7, 0xC19BF174,
+  0xE49B69C1, 0xEFBE4786, 0x0FC19DC6, 0x240CA1CC,
+  0x2DE92C6F, 0x4A7484AA, 0x5CB0A9DC, 0x76F988DA,
+  0x983E5152, 0xA831C66D, 0xB00327C8, 0xBF597FC7,
+  0xC6E00BF3, 0xD5A79147, 0x06CA6351, 0x14292967,
+  0x27B70A85, 0x2E1B2138, 0x4D2C6DFC, 0x53380D13,
+  0x650A7354, 0x766A0ABB, 0x81C2C92E, 0x92722C85,
+  0xA2BFE8A1, 0xA81A664B, 0xC24B8B70, 0xC76C51A3,
+  0xD192E819, 0xD6990624, 0xF40E3585, 0x106AA070,
+  0x19A4C116, 0x1E376C08, 0x2748774C, 0x34B0BCB5,
+  0x391C0CB3, 0x4ED8AA4A, 0x5B9CCA4F, 0x682E6FF3,
+  0x748F82EE, 0x78A5636F, 0x84C87814, 0x8CC70208,
+  0x90BEFFFA, 0xA4506CEB, 0xBEF9A3F7, 0xC67178F2,
+]);
+const _SHA256_BLOCK_CONSTANTS = new Uint32Array(_SHA256_ROUND_CONSTANTS);
+_SHA256_BLOCK_CONSTANTS[14] = 0xC9DC06A7;
+
+const _CS64_COEFFICIENTS = [
+  [0xE82E91B1, 0xB32700D0], [0x44DE24C6, 0x88DFF51D], [0x3BEB65BC, 0x29514038],
+  [0xC89C5933, 0xB328CBDF], [0x8D1EC211, 0xD405B4D5], [0x314EF5D5, 0x26E55F3C],
+  [0xE92491B1, 0x607801C6], [0xF0A5B9D5, 0x82B2C1FB], [0x06064CF3, 0xFA51A3DA],
+  [0xDA79FA60, 0x207CC464], [0xBED20560, 0x3C3C74F3], [0x89F9C9F8, 0xD2D14B61],
+  [0x35FA38C6, 0xBB04A2C1], [0xCB49E3C6, 0xC5626167],
+];
+
+function _rol16(v) { return (((v << 16) | (v >>> 16)) >>> 0); }
+function _rotr(x, n) { return ((x >>> n) | (x << (32 - n))) >>> 0; }
+function _words_le4_even(data) {
+  const padLen = (-data.length) & 3;
+  const padded = new Uint8Array(data.length + padLen);
+  padded.set(data);
+  const view = new DataView(padded.buffer);
+  const words = [];
+  for (let i = 0; i < padded.length; i += 4) words.push(view.getUint32(i, true));
+  if (words.length % 2 !== 0) words.push(0);
+  return words;
+}
+function _sigma0(v) { return ((v >>> 7) ^ (v << 25) ^ (v >>> 18) ^ (v << 14) ^ (v >>> 3)) >>> 0; }
+function _sigma1(v) { return ((v >>> 17) ^ (v << 15) ^ (v >>> 19) ^ (v << 13) ^ (v >>> 10)) >>> 0; }
+
+function _sha256_rounds(state, words, firstRound = 0) {
+  let [a, b, c, d, e, f, g, h] = state;
+  const constants = firstRound === 14 ? _SHA256_BLOCK_CONSTANTS : _SHA256_ROUND_CONSTANTS;
+  for (let i = firstRound; i < 64; i++) {
+    const s1 = (_rotr(e, 6) ^ _rotr(e, 11) ^ _rotr(e, 25)) >>> 0;
+    const ch = (g ^ (e & (f ^ g))) >>> 0;
+    const t1 = (h + s1 + ch + constants[i] + words[i]) >>> 0;
+    const s0 = (_rotr(a, 2) ^ _rotr(a, 13) ^ _rotr(a, 22)) >>> 0;
+    const maj = ((a & b) | (c & (a | b))) >>> 0;
+    const t2 = (s0 + maj) >>> 0;
+    h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+  }
+  return [a, b, c, d, e, f, g, h];
 }
 
-// DRM-style clock token the service started requiring: SHA-256 of the
-// trusted client token appended to the current time (rounded down to the
-// nearest 5 minutes), expressed as Windows file-time 100ns ticks.
-async function generateSecMsGec() {
-  // Windows filetime ticks (100ns units) for a present-day timestamp exceed
-  // Number.MAX_SAFE_INTEGER, so this must be done in BigInt -- a plain
-  // Number here silently loses precision and produces a signature the
-  // server will reject.
-  const WIN_EPOCH_OFFSET_SECONDS = 11644473600n;
+function _expand_sha256_schedule(words, firstWord = 16) {
+  for (let i = firstWord; i < 64; i++) {
+    words.push((_sigma1(words[i - 2]) + words[i - 7] + _sigma0(words[i - 15]) + words[i - 16]) >>> 0);
+  }
+}
+
+function _sha256_init(data) {
+  const words = new Array(14).fill(0);
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  words.push((data[0] << 16) | (data[1] << 8) | data[2]);
+  words.push(view.getUint32(3, false));
+  for (let i = 16; i < 30; i++) {
+    let val = _SHA256_SCHEDULE[i - 16];
+    if (i - 2 >= 14) val = (val + (i === 16 ? (_sigma1(words[i - 2]) ^ 0x000B92C0) : _sigma1(words[i - 2]))) >>> 0;
+    if (i - 7 >= 14) val = (val + words[i - 7]) >>> 0;
+    if (i - 15 >= 14) val = (val + (i === 29 ? (_sigma0(words[i - 15]) ^ 0x059C0B80) : _sigma0(words[i - 15]))) >>> 0;
+    words.push(val >>> 0);
+  }
+  words.push((_sigma1(words[28]) + words[23] + _sigma0(words[15]) + words[14] + 0xC9DC06A7 - _SHA256_ROUND_CONSTANTS[14]) >>> 0);
+  _expand_sha256_schedule(words, 31);
+  const working = _sha256_rounds(Array.from(_SHA256_STATE), words, 14);
+  return _SHA256_INITIAL.map((x, i) => (x + working[i]) >>> 0);
+}
+
+function _sha256_digest(data) {
+  const length = 57 + data.length;
+  const padLength = (55 - length) % 64;
+  const padCount = padLength < 0 ? padLength + 64 : padLength;
+  const padded = new Uint8Array((data.length - 7) + 1 + padCount + 8);
+  padded.set(data.subarray(7), 0);
+  padded[data.length - 7] = 0x80;
+  const view = new DataView(padded.buffer);
+  view.setBigUint64(padded.length - 8, BigInt(length) * 8n, false);
+  let state = _sha256_init(data.subarray(0, 7));
+  for (let offset = 0; offset < padded.length; offset += 64) {
+    const words = [];
+    for (let j = 0; j < 64; j += 4) words.push(view.getUint32(offset + j, false));
+    _expand_sha256_schedule(words, 16);
+    const working = _sha256_rounds(state, words, 0);
+    state = state.map((x, i) => (x + working[i]) >>> 0);
+  }
+  const out = new Uint8Array(32);
+  const outView = new DataView(out.buffer);
+  for (let i = 0; i < 8; i++) outView.setUint32(i * 4, state[i], false);
+  return out;
+}
+
+function _cs64_digest(data, digest) {
+  const dView = new DataView(digest.buffer, digest.byteOffset, digest.byteLength);
+  const key_a = dView.getUint32(0, true) | 1;
+  const key_b = dView.getUint32(4, true) | 1;
+  const factors = [Math.imul(key_a, 0x82893933) >>> 0, Math.imul(key_b, 0x82893933) >>> 0];
+  const terms = _CS64_COEFFICIENTS.map(([c], idx) => Math.imul(c, factors[idx % 2]) >>> 0);
+  const offsets = _CS64_COEFFICIENTS.map(([, o]) => o >>> 0);
+  const inputWithZero = new Uint8Array(1 + data.length);
+  inputWithZero.set(data, 1);
+  const words = _words_le4_even(inputWithZero);
+  words.forEach((word, index) => {
+    let term = Math.imul(word, index % 2 === 0 ? key_a : key_b) >>> 0;
+    let offset = Math.imul(_rol16(word), index % 2 === 0 ? 0xEF0569FB : 0xC31713DB) >>> 0;
+    if (index === 0) {
+      term = (term + Math.imul(0xF2F90B1A, factors[0])) >>> 0;
+      offset = (offset + 0x0B1A0000) >>> 0;
+    }
+    terms.push(term);
+    offsets.push(offset);
+  });
+  let swap_acc = 0, swap_last = 0, state = 0, acc = 0;
+  for (let i = 0; i < terms.length; i += 2) {
+    const x = terms[i], y = terms[i + 1];
+    let t = _rol16((offsets[i] + x) >>> 0);
+    let q = Math.imul(t, 0x76F50F34) >>> 0;
+    swap_acc = (swap_acc + Math.imul(_rol16(q), 0xC3EFEA97) + q) >>> 0;
+    t = _rol16((offsets[i + 1] + y) >>> 0);
+    q = Math.imul(t, 0x1881CE3C) >>> 0;
+    swap_last = (Math.imul(_rol16(q), 0x35BD1EC9) + q) >>> 0;
+    swap_acc = (swap_acc + swap_last) >>> 0;
+
+    state = (Math.imul(state, key_a) + x) >>> 0;
+    state = Math.imul(_rol16(state), 0xCF98B111) >>> 0;
+    state = Math.imul(_rol16(state), 0x87085B9F) >>> 0;
+    state = Math.imul(_rol16(state), 0x12CEB96D) >>> 0;
+    state = Math.imul(_rol16(state), 0x257E1D83) >>> 0;
+    acc = (acc + state) >>> 0;
+    t = (Math.imul(state, key_b) + y) >>> 0;
+    t = Math.imul(_rol16(t), 0xA27416F5) >>> 0;
+    t = Math.imul(_rol16(t), 0xD38396FF) >>> 0;
+    state = Math.imul(_rol16(Math.imul(_rol16(t), 0x7C932B89) >>> 0), 0xBFA49F69) >>> 0;
+    acc = (acc + state) >>> 0;
+  }
+  return [(swap_last ^ state) >>> 0, (swap_acc ^ acc) >>> 0];
+}
+
+/**
+ * Generates the Sec-MS-GEC v2 token (CS64 + adjusted SHA-256) matching Microsoft
+ * Edge's current read-aloud protocol requirement.
+ */
+export function generateSecMsGec() {
   const currentUnixSec = BigInt(Math.floor(Date.now() / 1000) + clockSkewSeconds);
-  let ticks = currentUnixSec + WIN_EPOCH_OFFSET_SECONDS;
+  let ticks = currentUnixSec + WIN_EPOCH;
   ticks -= ticks % 300n;
-  const windowsTicks = ticks * 10_000_000n;
-  return sha256HexUpper(`${windowsTicks}${TRUSTED_CLIENT_TOKEN}`);
+  ticks *= 10_000_000n;
+  const strToHash = new TextEncoder().encode(`${ticks}${TRUSTED_CLIENT_TOKEN}`);
+  const digest = _sha256_digest(strToHash);
+  const [csWord0, csWord1] = _cs64_digest(strToHash, digest);
+  const csBuf = new Uint8Array(8);
+  const csView = new DataView(csBuf.buffer);
+  csView.setUint32(0, csWord0, true);
+  csView.setUint32(4, csWord1, true);
+
+  const csHex = Array.from(csBuf).map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+  const shaHex = Array.from(digest).map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+  return `${csHex}-${shaHex}`;
 }
 
 function escapeSsml(text) {
@@ -156,7 +325,8 @@ export function synthesizeChunk(text, voice) {
   return new Promise(async (resolve, reject) => {
     let socket;
     try {
-      const secMsGec = await generateSecMsGec();
+      await syncServerClock();
+      const secMsGec = generateSecMsGec();
       const connectionId = randomHex(16);
       const url =
         `${WS_ENDPOINT}?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}` +

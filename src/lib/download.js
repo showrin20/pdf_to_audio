@@ -1,5 +1,5 @@
 import { OPFS_PATHS, STORAGE_KEYS } from "./constants.js";
-import { readFile } from "./opfs.js";
+import { readFile, exists } from "./opfs.js";
 
 function sanitizeFilename(name) {
   return name.replace(/[\\/:*?"<>|]+/g, "_").trim() || "audiobook";
@@ -7,6 +7,10 @@ function sanitizeFilename(name) {
 
 /** Reads the finished audiobook out of OPFS and hands it to the Downloads API. */
 export async function downloadAudiobook() {
+  const ready = await exists(OPFS_PATHS.FINAL_AUDIO);
+  if (!ready) {
+    throw new Error("Audiobook file is not ready yet.");
+  }
   const file = await readFile(OPFS_PATHS.FINAL_AUDIO);
   const { [STORAGE_KEYS.DOCUMENT_TITLE]: title } = await chrome.storage.local.get(
     STORAGE_KEYS.DOCUMENT_TITLE

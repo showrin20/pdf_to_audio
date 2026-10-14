@@ -39,27 +39,31 @@ function openHowToUse() {
 document.getElementById("howToUseBtn").addEventListener("click", openHowToUse);
 
 async function init() {
-  const stored = await chrome.storage.local.get([
-    STORAGE_KEYS.GEMINI_API_KEY,
-    STORAGE_KEYS.TTS_VOICE,
-    STORAGE_KEYS.PIPELINE_STATE,
-    STORAGE_KEYS.HAS_SEEN_GUIDE,
-  ]);
-  if (stored[STORAGE_KEYS.GEMINI_API_KEY]) apiKeyInput.value = stored[STORAGE_KEYS.GEMINI_API_KEY];
-  voiceSelect.value = stored[STORAGE_KEYS.TTS_VOICE] || DEFAULT_VOICE;
-  renderState(stored[STORAGE_KEYS.PIPELINE_STATE] || { stage: STAGE.IDLE });
+  try {
+    const stored = await chrome.storage.local.get([
+      STORAGE_KEYS.GEMINI_API_KEY,
+      STORAGE_KEYS.TTS_VOICE,
+      STORAGE_KEYS.PIPELINE_STATE,
+      STORAGE_KEYS.HAS_SEEN_GUIDE,
+    ]);
+    if (stored[STORAGE_KEYS.GEMINI_API_KEY]) apiKeyInput.value = stored[STORAGE_KEYS.GEMINI_API_KEY];
+    voiceSelect.value = stored[STORAGE_KEYS.TTS_VOICE] || DEFAULT_VOICE;
+    renderState(stored[STORAGE_KEYS.PIPELINE_STATE] || { stage: STAGE.IDLE });
 
-  if (!stored[STORAGE_KEYS.HAS_SEEN_GUIDE]) {
-    await chrome.storage.local.set({ [STORAGE_KEYS.HAS_SEEN_GUIDE]: true });
-    openHowToUse();
+    if (!stored[STORAGE_KEYS.HAS_SEEN_GUIDE]) {
+      await chrome.storage.local.set({ [STORAGE_KEYS.HAS_SEEN_GUIDE]: true });
+      openHowToUse();
+    }
+  } catch (err) {
+    console.warn("Popup init failed:", err);
   }
 }
 
 apiKeyInput.addEventListener("change", () => {
-  chrome.storage.local.set({ [STORAGE_KEYS.GEMINI_API_KEY]: apiKeyInput.value.trim() });
+  chrome.storage.local.set({ [STORAGE_KEYS.GEMINI_API_KEY]: apiKeyInput.value.trim() }).catch(() => {});
 });
 voiceSelect.addEventListener("change", () => {
-  chrome.storage.local.set({ [STORAGE_KEYS.TTS_VOICE]: voiceSelect.value });
+  chrome.storage.local.set({ [STORAGE_KEYS.TTS_VOICE]: voiceSelect.value }).catch(() => {});
 });
 
 document.getElementById("fileDrop").addEventListener("click", (e) => {
@@ -71,10 +75,15 @@ fileInput.addEventListener("change", async () => {
   if (!file) return;
   fileLabel.textContent = file.name;
   const title = file.name.replace(/\.pdf$/i, "");
-  await chrome.storage.local.set({ [STORAGE_KEYS.DOCUMENT_TITLE]: title });
-  await writeStream(OPFS_PATHS.SOURCE_PDF, file);
-  chrome.runtime.sendMessage({ type: MSG.START_PIPELINE, voice: voiceSelect.value });
-  renderState({ stage: STAGE.EXTRACTING });
+  try {
+    await chrome.storage.local.set({ [STORAGE_KEYS.DOCUMENT_TITLE]: title });
+    await writeStream(OPFS_PATHS.SOURCE_PDF, file);
+    await chrome.runtime.sendMessage({ type: MSG.START_PIPELINE, voice: voiceSelect.value });
+    renderState({ stage: STAGE.EXTRACTING });
+  } catch (err) {
+    console.error("Failed to start pipeline:", err);
+    renderState({ stage: STAGE.ERROR, message: err?.message || "Failed to start extraction." });
+  }
 });
 
 document.getElementById("openPlayer").addEventListener("click", () => {
@@ -82,12 +91,21 @@ document.getElementById("openPlayer").addEventListener("click", () => {
 });
 
 document.getElementById("downloadBtn").addEventListener("click", async () => {
-  await downloadAudiobook();
+  try {
+    await downloadAudiobook();
+  } catch (err) {
+    console.warn("Download failed:", err);
+    renderState({ stage: STAGE.ERROR, message: err?.message || "Audiobook file not ready yet." });
+  }
 });
 
 for (const id of ["newGeneration", "dismissError"]) {
   document.getElementById(id).addEventListener("click", async () => {
-    await chrome.runtime.sendMessage({ type: MSG.RESET_PIPELINE });
+    try {
+      await chrome.runtime.sendMessage({ type: MSG.RESET_PIPELINE });
+    } catch {
+      // Ignored if service worker is inactive
+    }
     fileInput.value = "";
     fileLabel.textContent = "Choose a PDF…";
     renderState({ stage: STAGE.IDLE });
